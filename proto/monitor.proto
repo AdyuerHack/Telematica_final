@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package monitor;
+
+// ──────────────────────────────────────────────
+//  Servicio que expone cada agente (MonitorC)
+// ──────────────────────────────────────────────
+service AgentService {
+  // Heartbeat: el servidor central pregunta "¿estás vivo?"
+  rpc Ping (PingRequest) returns (PingResponse);
+
+  // Métricas: el servidor central solicita la carga actual
+  rpc GetMetrics (MetricsRequest) returns (MetricsResponse);
+
+  // Registro: la instancia se registra con el servidor central
+  rpc Register (RegisterRequest) returns (RegisterResponse);
+}
+
+// ──────────────────────────────────────────────
+//  Heartbeat
+// ──────────────────────────────────────────────
+message PingRequest {
+  string sender_id = 1;   // ID del servidor que pregunta
+}
+
+message PingResponse {
+  bool alive        = 1;  // Siempre true si responde
+  string instance_id = 2; // ID de la instancia EC2
+  int64 timestamp   = 3;  // Unix timestamp
+}
+
+// ──────────────────────────────────────────────
+//  Métricas
+// ──────────────────────────────────────────────
+message MetricsRequest {
+  string requester_id = 1;
+}
+
+message MetricsResponse {
+  string instance_id  = 1;
+  float  cpu_load     = 2;  // 0.0 – 100.0 (%)
+  float  mem_load     = 3;  // 0.0 – 100.0 (%)
+  int64  timestamp    = 4;
+}
+
+// ──────────────────────────────────────────────
+//  Registro
+// ──────────────────────────────────────────────
+message RegisterRequest {
+  string instance_id  = 1;  // ID de la instancia EC2
+  string host         = 2;  // IP o DNS de la instancia
+  int32  port         = 3;  // Puerto donde escucha el agente
+}
+
+message RegisterResponse {
+  bool   accepted     = 1;
+  string message      = 2;
+}
