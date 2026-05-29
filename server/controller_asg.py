@@ -31,18 +31,18 @@ ASG_CONFIG = {
     "max_instances"     : 5,
 
     # ── Políticas de escalamiento ────────────────────────────────
-    "scale_out_cpu"     : 70.0,   # Si CPU promedio > este valor → crear instancia
-    "scale_in_cpu"      : 30.0,   # Si CPU promedio < este valor → terminar instancia
-    "cooldown_sec"      : 60,     # Tiempo de espera entre acciones de escala
+    "scale_out_cpu"     : 10.0,   # Si CPU promedio > este valor → crear instancia
+    "scale_in_cpu"      : 90.0,   # Si CPU promedio < este valor → terminar instancia
+    "cooldown_sec"      : 15,     # Tiempo de espera entre acciones de escala
 
     # ── AWS (rellena con tus datos de AWS Academy) ───────────────
     "region"            : "us-east-1",
-    "ami_id"            : "ami-XXXXXXXXXXXXXXXXX",   # ← Tu AMI personalizada
+    "ami_id"            : "ami-017a2c16b02373a3a",   # ← Tu AMI personalizada
     "instance_type"     : "t2.micro",
     "key_name"          : "vockey",                  # ← Tu Key Pair de Academy
-    "security_group_ids": ["sg-XXXXXXXXXXXXXXXXX"],  # ← Tu Security Group
-    "subnet_id"         : "subnet-XXXXXXXXXXXXXXXXX",# ← Tu Subnet
-
+    "security_group_ids": ["sg-09da02bef892432ef"],  # ← Tu Security Group
+    "subnet_id"         : "subnet-0cea20d163ef577c8",# ← Tu Subnet
+    "iam_instance_profile": "LabInstanceProfile",
     # ── Puerto donde escuchará el agente en cada nueva instancia ─
     "agent_port"        : 50051,
 }
@@ -50,9 +50,7 @@ ASG_CONFIG = {
 # Script que se ejecuta al arrancar cada instancia EC2 nueva
 # (instala dependencias y arranca el agente MonitorC)
 USER_DATA_SCRIPT = """#!/bin/bash
-cd /home/ec2-user/agent
-pip3 install grpcio grpcio-tools
-python3 monitor_c.py --instance-id $(curl -s http://169.254.169.254/latest/meta-data/instance-id) --port 50051 &
+sudo systemctl start grpc-agent
 """
 
 
@@ -70,6 +68,7 @@ class ControllerASG:
         self._thread      = None
         self._last_action = 0.0      # timestamp de la última acción de escala
         self._lock        = threading.Lock()
+        self._launching   = set()
 
         if not dry_run:
             self.ec2 = boto3.client("ec2", region_name=self.config["region"])
@@ -97,7 +96,7 @@ class ControllerASG:
 
     # ── Evaluación de políticas ────────────────────────────────
     def _evaluate_policies(self):
-        alive_count = self.monitor.get_alive_count()
+        alive_count = self.monitor.get_alive_count() + len(self._launching)
         avg_cpu     = self.monitor.get_average_cpu()
         cfg         = self.config
 
@@ -111,8 +110,11 @@ class ControllerASG:
         if alive_count < cfg["min_instances"]:
             needed = cfg["min_instances"] - alive_count
             logger.warning(f"⚡ Por debajo del mínimo. Creando {needed} instancia(s)...")
-            for _ in range(needed):
-                self._scale_out()
+            if self._cooldown_ok():
+                for _ in range(needed):
+                    self._scale_out()
+            else:
+                logger.info("⏳ En período de cooldown, esperando mínimo...")
             return
 
         # ── Regla 2: no superar el máximo ───────────────────────
@@ -166,6 +168,7 @@ class ControllerASG:
                 KeyName         = cfg["key_name"],
                 SecurityGroupIds= cfg["security_group_ids"],
                 SubnetId        = cfg["subnet_id"],
+                IamInstanceProfile = {"Name": cfg["iam_instance_profile"]},
                 UserData        = USER_DATA_SCRIPT,
                 TagSpecifications=[{
                     "ResourceType": "instance",
@@ -175,6 +178,7 @@ class ControllerASG:
             )
             instance = response["Instances"][0]
             new_id   = instance["InstanceId"]
+            self._launching.add(new_id)
             logger.info(f"✅ Instancia creada: {new_id} (esperando IP pública...)")
 
             # Esperar a que la instancia tenga IP
@@ -188,6 +192,7 @@ class ControllerASG:
 
             # Registrar en el MonitorS para empezar a monitorear
             self.monitor.register_instance(new_id, public_ip, cfg["agent_port"])
+            self._launching.discard(new_id)
             self._reset_cooldown()
 
         except Exception as e:
