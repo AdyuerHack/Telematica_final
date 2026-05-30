@@ -6,7 +6,7 @@ reemplazando el servicio nativo de AWS Auto Scaling.
 ## Integrantes
 - Adyuer Ojeda Badel
 - Julian Peña Ochoa
-- Carlos Diaz Hernandez
+- Carlos Arturo Diaz Hernandez
 
 ---
 
